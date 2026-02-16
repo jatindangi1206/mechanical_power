@@ -1,0 +1,259 @@
+# ============================================================
+# Mechanical Power Personalisation — Project Configuration
+# ============================================================
+
+project:
+  name: "mechanical_power"
+  version: "1.0.0"
+  random_seed: 42
+
+# ----------------------------------------------------------
+# Data Sources
+# ----------------------------------------------------------
+data:
+  source: "mimic"  # mimic | amsterdam | hirid
+
+  mimic:
+    project_id: "physionet-data"
+    dataset: "mimiciv_3_1"
+    credentials_path: null  # path to GCP service account JSON, or null for default
+
+  amsterdam:
+    connection_string: "postgresql://user:pass@host:5432/amsterdamumcdb"
+
+  hirid:
+    data_dir: "/path/to/hirid/raw"
+
+  output_dir: "data/processed"
+  cache_dir: "data/cache"
+
+# ----------------------------------------------------------
+# Cohort Selection
+# ----------------------------------------------------------
+cohort:
+  min_age: 18
+  min_ventilation_hours: 24
+  require_complete_outcome: true
+  exclude:
+    - ecmo
+    - comfort_care_within_24h
+    - traumatic_brain_injury
+
+# ----------------------------------------------------------
+# Preprocessing
+# ----------------------------------------------------------
+preprocessing:
+  # Physiological range filters (values outside are set to NaN)
+  valid_ranges:
+    tidal_volume: [50, 1500]         # mL
+    respiratory_rate: [5, 50]        # breaths/min
+    peep: [0, 30]                    # cmH2O
+    plateau_pressure: [5, 60]        # cmH2O
+    spo2: [50, 100]                  # %
+    heart_rate: [20, 250]            # bpm
+    mechanical_power: [0, 100]       # J/min
+    mean_arterial_pressure: [20, 200] # mmHg
+    fio2: [0.21, 1.0]
+
+  # Imputation strategies
+  imputation:
+    vitals: "forward_fill_6h"
+    labs: "forward_fill_24h"
+    ventilator: "forward_fill_1h"
+    static: "median"
+
+  # Normalisation
+  normalisation:
+    continuous: "z_score"
+    vitals: "min_max"
+    categorical: "one_hot"
+
+  # Temporal
+  sequence_window_hours: 24
+  timestep_hours: 1
+
+# ----------------------------------------------------------
+# Feature Engineering
+# ----------------------------------------------------------
+features:
+  static:
+    - age
+    - sex
+    - bmi
+    - predicted_body_weight
+    - admission_type
+    - ards_diagnosis
+    - sepsis_diagnosis
+    - comorbidity_count
+    - apache_iii
+    - sofa_score
+    - oasis_score
+
+  dynamic_vitals:
+    - heart_rate
+    - mean_arterial_pressure
+    - spo2
+    - temperature
+    - gcs_total
+
+  dynamic_labs:
+    - ph
+    - pao2
+    - paco2
+    - pf_ratio
+    - lactate
+    - creatinine
+    - bilirubin
+    - platelet_count
+
+  ventilator:
+    - mechanical_power
+    - tidal_volume
+    - respiratory_rate
+    - peep
+    - fio2
+    - plateau_pressure
+    - driving_pressure
+    - compliance
+    - minute_ventilation
+
+  interventions:
+    - vasopressor_dose
+    - sedation
+    - neuromuscular_blockade
+    - prone_positioning
+
+# ----------------------------------------------------------
+# MDP / RL Formulation
+# ----------------------------------------------------------
+mdp:
+  # Action space (discrete MP adjustments)
+  actions:
+    0: { name: "large_decrease",  delta: -5 }
+    1: { name: "small_decrease",  delta: -2 }
+    2: { name: "maintain",        delta:  0 }
+    3: { name: "small_increase",  delta: +2 }
+    4: { name: "large_increase",  delta: +5 }
+
+  num_actions: 5
+  gamma: 0.99  # discount factor
+
+  # Reward function weights
+  reward:
+    survival_bonus: 100
+    death_penalty: -100
+    spo2_weight: 2.0
+    pf_ratio_weight: 0.1
+    map_improvement_weight: 0.5
+    plateau_pressure_30_penalty: -15
+    plateau_pressure_28_penalty: -5
+    driving_pressure_15_penalty: -8
+    mp_over_20_penalty_per_unit: -3
+    spo2_below_85_penalty: -25
+    spo2_below_88_penalty: -10
+    map_below_60_penalty: -20
+    paco2_over_60_penalty: -10
+    weaning_bonus: 5
+    time_penalty_per_hour: -0.1
+
+  # Trajectory settings
+  mp_trajectory_window: 6  # hours of MP history in state
+
+# ----------------------------------------------------------
+# Training
+# ----------------------------------------------------------
+training:
+  # Data splits
+  split:
+    train: 0.70
+    val: 0.15
+    test: 0.15
+    stratify_by: ["outcome", "ards_diagnosis", "age_group"]
+
+  # Strategy 1 & 2: XGBoost
+  xgboost:
+    n_estimators: 500
+    max_depth: 6
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    early_stopping_rounds: 20
+
+  # Strategy 3: CQL
+  cql:
+    actor_learning_rate: 3.0e-4
+    critic_learning_rate: 3.0e-4
+    alpha: 1.0
+    conservative_weight: 5.0
+    n_critics: 2
+    tau: 0.005
+    n_epochs: 100
+    batch_size: 256
+    use_gpu: true
+
+  # Hyperparameter search
+  hyperparam_search:
+    n_trials: 50
+    actor_learning_rate: [1.0e-4, 3.0e-4, 1.0e-3]
+    critic_learning_rate: [1.0e-4, 3.0e-4, 1.0e-3]
+    alpha: [0.5, 1.0, 2.0]
+    conservative_weight: [1.0, 5.0, 10.0]
+
+# ----------------------------------------------------------
+# Evaluation
+# ----------------------------------------------------------
+evaluation:
+  subgroups:
+    - ards_patients
+    - non_ards
+    - elderly
+    - obese
+    - sepsis
+
+  clinician_validation:
+    n_cases: 100
+    n_reviewers: 10
+
+  # Success thresholds
+  thresholds:
+    mvp:
+      auroc: 0.80
+      safety_violations: 0
+      expert_agreement: 0.60
+    strong:
+      auroc: 0.85
+      expert_agreement: 0.70
+    exceptional:
+      auroc: 0.88
+      expert_agreement: 0.75
+
+# ----------------------------------------------------------
+# Deployment
+# ----------------------------------------------------------
+deployment:
+  api:
+    host: "0.0.0.0"
+    port: 8000
+
+  safety:
+    min_mp: 8
+    max_mp: 30
+    max_plateau_pressure: 30
+    max_driving_pressure: 15
+    critical_spo2: 85
+    unstable_map_threshold: 60
+    unstable_spo2_threshold: 88
+    unstable_hr_threshold: 130
+    unstable_lactate_threshold: 4.0
+
+  similar_patients_k: 50
+
+# ----------------------------------------------------------
+# Paths
+# ----------------------------------------------------------
+paths:
+  raw_data: "data/raw"
+  processed_data: "data/processed"
+  models: "models"
+  results: "results"
+  logs: "logs"
