@@ -11,7 +11,10 @@ project:
 # Data Sources
 # ----------------------------------------------------------
 data:
-  source: "mimic"  # mimic | amsterdam | hirid
+  source: "mimic_local"  # mimic | mimic_local | amsterdam | hirid
+
+  mimic_local:
+    data_dir: "mimic-iv-clinical-database-demo-2.2"
 
   mimic:
     project_id: "physionet-data"
