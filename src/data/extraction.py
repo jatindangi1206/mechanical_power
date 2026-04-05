@@ -431,6 +431,21 @@ class LocalMIMICExtractor(BaseExtractor):
             logger.debug(f"Loaded {key}: {len(self._cache[key])} rows")
         return self._cache[key]
 
+    def _load_filtered(self, subdir: str, filename: str,
+                       filter_col: str, filter_values: set,
+                       usecols: list = None,
+                       chunksize: int = 500_000) -> pd.DataFrame:
+        """Stream a large CSV.gz in chunks, returning only rows where filter_col is in filter_values."""
+        path = os.path.join(self.data_dir, subdir, filename)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"MIMIC file not found: {path}")
+        chunks = []
+        for chunk in pd.read_csv(path, usecols=usecols, chunksize=chunksize):
+            matched = chunk[chunk[filter_col].isin(filter_values)]
+            if not matched.empty:
+                chunks.append(matched)
+        return pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=usecols or [])
+
     # ------------------------------------------------------------------
     def extract_ventilation_episodes(self) -> pd.DataFrame:
         min_age = self.cohort_config.get("min_age", 18)
@@ -465,12 +480,16 @@ class LocalMIMICExtractor(BaseExtractor):
             vent = vent[vent["vent_hours"] >= min_hours]
 
         # Also include stays with ventilator charting but no procedure event
-        chartevents = self._load("icu", "chartevents.csv.gz")
         vent_itemids = []
         for key in ["tidal_volume_observed", "tidal_volume_set", "respiratory_rate",
                      "peep", "fio2", "plateau_pressure", "peak_pressure"]:
             vent_itemids.extend(MIMIC_ITEMIDS[key])
-        charted_stays = set(chartevents[chartevents["itemid"].isin(vent_itemids)]["stay_id"].unique())
+        chartevents = self._load_filtered(
+            "icu", "chartevents.csv.gz",
+            filter_col="itemid", filter_values=set(vent_itemids),
+            usecols=["stay_id", "itemid"],
+        )
+        charted_stays = set(chartevents["stay_id"].unique())
         proc_stays = set(vent["stay_id"].unique())
         extra_stays = charted_stays - proc_stays
 
@@ -502,10 +521,19 @@ class LocalMIMICExtractor(BaseExtractor):
         return vent
 
     def _extract_chartevents(self, stay_ids: list, itemid_list: list) -> pd.DataFrame:
-        """Extract chartevents for given stay_ids and item IDs."""
-        ce = self._load("icu", "chartevents.csv.gz")
-        mask = ce["stay_id"].isin(stay_ids) & ce["itemid"].isin(itemid_list)
-        df = ce.loc[mask, ["stay_id", "charttime", "itemid", "valuenum"]].copy()
+        """Extract chartevents for given stay_ids and item IDs, streaming in chunks."""
+        stay_set = set(stay_ids)
+        item_set = set(itemid_list)
+        path = os.path.join(self.data_dir, "icu", "chartevents.csv.gz")
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"MIMIC file not found: {path}")
+        usecols = ["stay_id", "charttime", "itemid", "valuenum"]
+        chunks = []
+        for chunk in pd.read_csv(path, usecols=usecols, chunksize=500_000):
+            matched = chunk[chunk["stay_id"].isin(stay_set) & chunk["itemid"].isin(item_set)]
+            if not matched.empty:
+                chunks.append(matched)
+        df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=usecols)
         df = df.dropna(subset=["valuenum"])
         df["charttime"] = pd.to_datetime(df["charttime"])
         return df.sort_values(["stay_id", "charttime"]).reset_index(drop=True)
@@ -528,14 +556,27 @@ class LocalMIMICExtractor(BaseExtractor):
         for items in MIMIC_LAB_ITEMIDS.values():
             lab_items.extend(items)
 
-        labs = self._load("hosp", "labevents.csv.gz")
         icu = self._load("icu", "icustays.csv.gz")
+        stay_to_hadm = (
+            icu[icu["stay_id"].isin(stay_ids)]
+            .set_index("hadm_id")["stay_id"]
+            .to_dict()
+        )
+        valid_hadm = set(stay_to_hadm.keys())
+        item_set = set(lab_items)
 
-        # Join labs to ICU stays via hadm_id
-        lab_icu = labs.merge(icu[["stay_id", "hadm_id"]], on="hadm_id", how="inner")
-        mask = lab_icu["stay_id"].isin(stay_ids) & lab_icu["itemid"].isin(lab_items)
-        df = lab_icu.loc[mask, ["stay_id", "charttime", "itemid", "valuenum"]].copy()
-        df = df.dropna(subset=["valuenum"])
+        path = os.path.join(self.data_dir, "hosp", "labevents.csv.gz")
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"MIMIC file not found: {path}")
+        usecols = ["hadm_id", "charttime", "itemid", "valuenum"]
+        chunks = []
+        for chunk in pd.read_csv(path, usecols=usecols, chunksize=500_000):
+            matched = chunk[chunk["hadm_id"].isin(valid_hadm) & chunk["itemid"].isin(item_set)]
+            if not matched.empty:
+                chunks.append(matched)
+        df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=usecols)
+        df["stay_id"] = df["hadm_id"].map(stay_to_hadm)
+        df = df.dropna(subset=["valuenum", "stay_id"])
         df["charttime"] = pd.to_datetime(df["charttime"])
         return df.sort_values(["stay_id", "charttime"]).reset_index(drop=True)
 
@@ -550,10 +591,17 @@ class LocalMIMICExtractor(BaseExtractor):
         df.rename(columns={"anchor_age": "age", "gender": "sex", "race": "ethnicity"}, inplace=True)
 
         # Try to get height and weight from chartevents
-        ce = self._load("icu", "chartevents.csv.gz")
+        hw_itemids = set(MIMIC_ITEMIDS["height"] + MIMIC_ITEMIDS["weight"])
+        stay_set = set(stay_ids)
+        ce = self._load_filtered(
+            "icu", "chartevents.csv.gz",
+            filter_col="itemid", filter_values=hw_itemids,
+            usecols=["stay_id", "itemid", "valuenum"],
+        )
+        ce = ce[ce["stay_id"].isin(stay_set)]
         for param, col in [("height", "height_cm"), ("weight", "weight_kg")]:
             item_ids = MIMIC_ITEMIDS[param]
-            hw = ce[ce["itemid"].isin(item_ids) & ce["stay_id"].isin(stay_ids)]
+            hw = ce[ce["itemid"].isin(item_ids)]
             if not hw.empty:
                 hw_agg = hw.groupby("stay_id")["valuenum"].median().reset_index()
                 hw_agg.columns = ["stay_id", col]

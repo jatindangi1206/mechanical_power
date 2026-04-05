@@ -14,7 +14,7 @@ data:
   source: "mimic_local"  # mimic | mimic_local | amsterdam | hirid
 
   mimic_local:
-    data_dir: "mimic-iv-clinical-database-demo-2.2"
+    data_dir: "mimiciv/3.1"
 
   mimic:
     project_id: "physionet-data"
@@ -85,12 +85,6 @@ features:
     - bmi
     - predicted_body_weight
     - admission_type
-    - ards_diagnosis
-    - sepsis_diagnosis
-    - comorbidity_count
-    - apache_iii
-    - sofa_score
-    - oasis_score
 
   dynamic_vitals:
     - heart_rate
@@ -120,11 +114,7 @@ features:
     - compliance
     - minute_ventilation
 
-  interventions:
-    - vasopressor_dose
-    - sedation
-    - neuromuscular_blockade
-    - prone_positioning
+  interventions: []
 
 # ----------------------------------------------------------
 # MDP / RL Formulation

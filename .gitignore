@@ -1,0 +1,61 @@
+# ── Data ────────────────────────────────────────────────────────────
+data/raw/
+data/processed/
+data/cache/
+
+# ── MIMIC datasets (never push patient data) ────────────────────────
+mimic-iii-clinical-database-demo-1.4/
+mimic-iv-clinical-database-demo-2.2/
+mimiciv/
+
+# ── Trained model weights ────────────────────────────────────────────
+models/
+notebooks/models/
+*.pkl
+*.pt
+*.pth
+*.h5
+*.ckpt
+*.bin
+# XGBoost JSON models
+notebooks/models/*.json
+
+# ── Results & figures (reproducible, not tracked) ───────────────────
+results/
+notebooks/figures/
+
+# ── Logs ────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# ── Jupyter ──────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+notebooks/models/.ipynb_checkpoints/
+
+# ── Environments ────────────────────────────────────────────────────
+.env
+.venv
+env/
+venv/
+
+# ── OS / IDE ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
