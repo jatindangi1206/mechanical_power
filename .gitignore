@@ -10,15 +10,17 @@ mimiciv/
 
 # ── Trained model weights ────────────────────────────────────────────
 models/
-notebooks/models/
 *.pkl
 *.pt
 *.pth
 *.h5
 *.ckpt
 *.bin
-# XGBoost JSON models
-notebooks/models/*.json
+# Ignore everything under notebooks/models/ except the tracked weights
+notebooks/models/*
+!notebooks/models/strategy1_xgb.json
+!notebooks/models/strategy2_xgb.json
+!notebooks/models/strategy3_cql.pt
 
 # ── Results & figures (reproducible, not tracked) ───────────────────
 results/
