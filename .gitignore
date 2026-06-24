@@ -9,18 +9,16 @@ mimic-iv-clinical-database-demo-2.2/
 mimiciv/
 
 # ── Trained model weights ────────────────────────────────────────────
-models/
+/models/
 *.pkl
 *.pt
 *.pth
 *.h5
 *.ckpt
 *.bin
-# Ignore everything under notebooks/models/ except the tracked weights
-notebooks/models/*
-!notebooks/models/strategy1_xgb.json
-!notebooks/models/strategy2_xgb.json
-!notebooks/models/strategy3_cql.pt
+# notebooks/models/ holds the trained model weights — keep them tracked & pushed
+!notebooks/models/*
+notebooks/models/.ipynb_checkpoints/
 
 # ── Results & figures (reproducible, not tracked) ───────────────────
 results/
